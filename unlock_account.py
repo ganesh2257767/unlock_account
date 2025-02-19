@@ -5,6 +5,8 @@ from pprint import pprint
 import gooeypie as gp
 import json
 
+version = 0.2
+
 urls = {
     0: "http://cdapix-int.lab.cscqa.com:80/cdxservices/ws",
     1: "http://cdapix-q2.lab.cscqa.com:80/cdxservices/ws",
@@ -95,14 +97,16 @@ def query_lock(url, corp, house, operator):
     res = requests.post(url, body_query_lock.format(corp, house, operator), headers=HEADERS, auth=AUTHENTICATION)    
     print(res.status_code)
     response = xmltodict.parse(res.content)
-    return json.dumps(response, indent=4)
+    response_inner = xmltodict.parse(response["env:Envelope"]["env:Body"]["m:sendxmlResponse"]["result"]["#text"])["transaction"]
+    return response_inner
 
 
 def unlock_account(url, corp, house, operator, pid):
     res = requests.post(url, body_unlock.format(corp, house, operator, pid), headers=HEADERS, auth=AUTHENTICATION)    
     print(res.status_code)
     response = xmltodict.parse(res.content)
-    return json.dumps(response, indent=4)
+    response_inner = xmltodict.parse(response["env:Envelope"]["env:Body"]["m:sendxmlResponse"]["result"]["#text"])["transaction"]
+    return response_inner
 
 def lock_account(url, corp, house, operator):
     res = requests.post(url, body_lock.format(corp, house, operator), headers=HEADERS, auth=AUTHENTICATION)    
@@ -113,17 +117,28 @@ def lock_account(url, corp, house, operator):
 
 def submit_request(event):
     url = urls[dropdown_env.selected_index]
-    body = functions[dropdown_action.selected_index]
-    if all((dropdown_env.selected, input_corp.text, input_house.text, input_operator.text, input_pid.disabled or input_pid.text)):
-        if input_pid.text and not input_pid.disabled:
-            full_response = requests.post(url, body.format(input_corp.text, input_house.text, input_operator.text, input_pid.text), headers=HEADERS, auth=AUTHENTICATION)    
-        else:
-            full_response = requests.post(url, body.format(input_corp.text, input_house.text, input_operator.text), headers=HEADERS, auth=AUTHENTICATION)    
-        
-        process_response(full_response)
+    query_lock_response = query_lock(url, input_corp.text, input_house.text, "SM2")
+    print("Response:", query_lock_response)
+    
+    if not query_lock_response["errordescription"]:
+        operator = query_lock_response["opr"]
+        pid = query_lock_response["lockacct_pid"]
     else:
-        app.alert("Enter all values")
+        app.alert("Error", query_lock_response["errordescription"]["#text"], "error")
         return
+    
+    unlock_account_response = unlock_account(url, input_corp.text, input_house.text, operator, pid)
+    result = unlock_account_response["lockacct_result"]
+    if result == "0":
+        title = "Success"
+        result = "Account unlocked successfully!"
+        icon = "info"
+    else:
+        title = "Failure"
+        icon = "error"
+    
+    app.alert(title, result, icon)
+        
 
 def process_response(response):
         # Converting the full XML response to Dictionary
@@ -143,47 +158,37 @@ def process_response(response):
         output.text = output_final
         result.show()
    
-        
-def enable_disable_pid(event):
-    if event.widget.selected_index == 1:
-        input_pid.disabled = False
-    else:
-        input_pid.disabled = True
-    
 
-# query_lock()
 functions = {
     0: body_query_lock,
     1: body_unlock,
     2: body_lock
 }
 
-version = 0.1
 
 
 app = gp.GooeyPieApp(f"Unlock Account v{version}")
-# app.width = 600
-# app.height = 600
+app.width = 300
+
+app.set_resizable(False)
+
+try:
+    app.set_icon('.//unlocked.png')
+except FileNotFoundError:
+    pass
 
 
 label_env = gp.Label(app, 'Select ENV')
 dropdown_env = gp.Dropdown(app, ['QA INT', 'QA2', 'QA3'])
 
-label_action = gp.Label(app, 'Select API')
-dropdown_action = gp.Dropdown(app, ['Query Lock', 'Unlock Account', 'Lock Account'])
-    
-dropdown_action.add_event_listener('select', enable_disable_pid)
 
 label_corp = gp.Label(app, 'Corp')
 input_corp = gp.Input(app)
 label_house = gp.Label(app, 'House')
 input_house = gp.Input(app)
-label_operator = gp.Label(app, 'Operator')
-input_operator = gp.Input(app)
-label_pid = gp.Label(app, 'PID')
-input_pid = gp.Input(app)
 
-submit = gp.Button(app, 'Submit', submit_request)
+
+submit = gp.Button(app, 'Unlock', submit_request)
 
 result = gp.Window(app, "Result")
 output = gp.Textbox(result)
@@ -191,20 +196,15 @@ output.width = 50
 output.height = 10
 
 
-app.set_grid(7, 2)
+app.set_grid(4, 2)
 app.add(label_env, 1, 1)
 app.add(dropdown_env, 1, 2)
-app.add(label_action, 2, 1)
-app.add(dropdown_action, 2, 2)
-app.add(label_corp, 3, 1)
-app.add(input_corp, 3, 2)
-app.add(label_house, 4, 1)
-app.add(input_house, 4, 2)
-app.add(label_operator, 5, 1)
-app.add(input_operator, 5, 2)
-app.add(label_pid, 6, 1)
-app.add(input_pid, 6, 2)
-app.add(submit, 7, 1, column_span=2)
+app.add(label_corp, 2, 1)
+app.add(input_corp, 2, 2)
+app.add(label_house, 3, 1)
+app.add(input_house, 3, 2)
+
+app.add(submit, 4, 1, column_span=2)
 
 result.set_grid(1, 1)
 result.add(output, 1, 1, fill=True, stretch=True)
